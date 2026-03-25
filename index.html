@@ -151,6 +151,11 @@
         let mediaRecorder;
         let recordedChunks = [];
 
+        // Web Audio API Variables untuk Sync Audio & Video yang sempurna
+        let audioCtx;
+        let audioDest;
+        let sourceNode;
+
         // Update Labels
         volSlider.addEventListener('input', (e) => {
             sourceVideo.volume = e.target.value;
@@ -178,12 +183,30 @@
                 playBtn.disabled = false;
                 downloadBtn.disabled = false;
                 statusText.textContent = "Ready.";
-                renderFrame(); // Render first frame
+                renderFrame(); 
             };
         });
 
+        // Setup Audio Context jika belum ada (harus diinisiasi setelah user interaksi/klik)
+        function initAudio() {
+            if (!audioCtx) {
+                audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                sourceNode = audioCtx.createMediaElementSource(sourceVideo);
+                audioDest = audioCtx.createMediaStreamDestination();
+                
+                // Sambungkan ke destination (untuk di-record)
+                sourceNode.connect(audioDest);
+                // Sambungkan ke speaker output (agar tetap terdengar saat preview)
+                sourceNode.connect(audioCtx.destination);
+            }
+            if (audioCtx.state === 'suspended') {
+                audioCtx.resume();
+            }
+        }
+
         // Play/Pause
         playBtn.addEventListener('click', () => {
+            initAudio(); // Panggil inisiasi audio
             if (sourceVideo.paused) {
                 sourceVideo.play();
                 processVideo();
@@ -209,69 +232,63 @@
             const shift = parseInt(shiftSlider.value);
             const drop = dropCheckbox.checked;
 
-            // Draw current frame to temp buffer
             tempCtx.drawImage(sourceVideo, 0, 0, width, height);
 
-            // Clear output
             ctx.fillStyle = "#000";
             ctx.fillRect(0, 0, width, height);
 
-            // Interlacing and PAL effect logic
             for (let y = 0; y < height; y += size * 2) {
-                // FIELD A (Current Frame, shifted X)
+                // FIELD A (Current Frame)
                 ctx.drawImage(tempCanvas, 0, y, width, size, shift, y, width, size);
 
-                // FIELD B (Previous Frame temporally, or dropped)
+                // FIELD B (Previous Frame)
                 if (y + size < height) {
                     if (!drop) {
                         ctx.drawImage(prevFrameCanvas, 0, y + size, width, size, 0, y + size, width, size);
                     }
                 }
             }
-
-            // Save current frame as previous frame for the next loop (Temporal shift)
             prevCtx.drawImage(tempCanvas, 0, 0, width, height);
         }
 
         // Automatic Process and Download Logic
-        downloadBtn.addEventListener('click', () => {
+        downloadBtn.addEventListener('click', async () => {
             if (isProcessing) return;
             isProcessing = true;
             recordedChunks = [];
             
+            initAudio(); // Pastikan rute audio siap
+
             // Reset video to start
             sourceVideo.currentTime = 0;
             
             // Setup capture streams - Set to 60 FPS
             const canvasStream = outCanvas.captureStream(60); 
             
-            // Attempt to get audio track from original video
-            let audioStream;
-            if (sourceVideo.captureStream) {
-                audioStream = sourceVideo.captureStream();
-            } else if (sourceVideo.mozCaptureStream) {
-                audioStream = sourceVideo.mozCaptureStream();
-            }
-
-            if (audioStream && audioStream.getAudioTracks().length > 0) {
-                canvasStream.addTrack(audioStream.getAudioTracks()[0]);
-            }
+            // Gabungkan track video dari canvas dan track audio dari Web Audio API
+            const tracks = [];
+            const videoTracks = canvasStream.getVideoTracks();
+            const audioTracks = audioDest.stream.getAudioTracks();
+            
+            if (videoTracks.length > 0) tracks.push(videoTracks[0]);
+            if (audioTracks.length > 0) tracks.push(audioTracks[0]);
+            
+            const combinedStream = new MediaStream(tracks);
 
             // High bitrate options for high quality
             const options = {
-                mimeType: 'video/webm; codecs=vp9',
+                mimeType: 'video/mov; codecs=vp9,opus',
                 videoBitsPerSecond: 8000000 // 8 Mbps
             };
 
             try {
-                mediaRecorder = new MediaRecorder(canvasStream, options);
+                mediaRecorder = new MediaRecorder(combinedStream, options);
             } catch (e) {
-                // Fallback if vp9 isn't supported, but keep high bitrate
-                mediaRecorder = new MediaRecorder(canvasStream, { videoBitsPerSecond: 8000000 }); 
+                mediaRecorder = new MediaRecorder(combinedStream, { videoBitsPerSecond: 8000000 }); 
             }
 
             mediaRecorder.ondataavailable = (e) => {
-                if (e.data.size > 0) recordedChunks.push(e.data);
+                if (e.data && e.data.size > 0) recordedChunks.push(e.data);
             };
 
             mediaRecorder.onstop = () => {
@@ -280,7 +297,7 @@
                 const a = document.createElement('a');
                 a.style.display = 'none';
                 a.href = url;
-                a.download = 'videomin_processed_60fps.webm';
+                a.download = 'videomin.mov';
                 document.body.appendChild(a);
                 a.click();
                 window.URL.revokeObjectURL(url);
@@ -294,9 +311,10 @@
             // Start recording and playback
             playBtn.disabled = true;
             downloadBtn.textContent = "Processing... (Please wait)";
-            statusText.textContent = "Processing video inline. Do not switch tabs.";
+            statusText.textContent = "Processing video... PENTING: Jangan pindah tab (Keep this tab active!).";
             
-            mediaRecorder.start();
+            // Gunakan timeslice (misal 100ms) agar buffer memori stabil dan tidak berat di akhir
+            mediaRecorder.start(100); 
             sourceVideo.play();
             processVideo();
 
@@ -304,7 +322,7 @@
             sourceVideo.onended = () => {
                 mediaRecorder.stop();
                 cancelAnimationFrame(animationId);
-                sourceVideo.onended = null; // Reset listener
+                sourceVideo.onended = null; 
             };
         });
     </script>
