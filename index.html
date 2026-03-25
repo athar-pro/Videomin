@@ -277,7 +277,7 @@
 
             // High bitrate options for high quality
             const options = {
-                mimeType: 'video/mov; codecs=vp9,opus',
+                mimeType: 'video/webm; codecs=vp9,opus',
                 videoBitsPerSecond: 8000000 // 8 Mbps
             };
 
@@ -297,7 +297,7 @@
                 const a = document.createElement('a');
                 a.style.display = 'none';
                 a.href = url;
-                a.download = 'videomin.mov';
+                a.download = 'videomin.webm';
                 document.body.appendChild(a);
                 a.click();
                 window.URL.revokeObjectURL(url);
